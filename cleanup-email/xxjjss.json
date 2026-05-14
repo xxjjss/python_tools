@@ -1,0 +1,25 @@
+{
+    "email_address": "xxjjss@gmail.com",
+    "service_provider": "gmail",
+    "batch_size": 10,
+    "important_sender": [
+        "invoicecloud\\.net",
+        "studio19architects.com",
+        "uber.com"
+    ],
+    "important_email_subjects": [
+      "City of Bellevue, WA Invoice"
+    ],
+    "start_date": "2013-1-1",
+    "remove_all_before": "2013-3-31",
+    "remove_unimportant_before": "2013-4-30",
+    "unimportant_email_subjects": [
+        "AutoPay payment reminder",
+        "Check in now",
+        "Check in is now open"
+    ],
+    "auth": {
+        "token": "ACCESS_TOKEN",
+        "secret": ""
+    }
+}
