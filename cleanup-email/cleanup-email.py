@@ -21,7 +21,7 @@ import os
 import subprocess
 import tty
 import termios
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from email.header import decode_header
 from email.utils import parseaddr, parsedate_to_datetime
 from dateutil import parser as date_parser
@@ -38,12 +38,13 @@ def getch():
     return ch
 
 class EmailCleaner:
-    def __init__(self, config_path, force=False, out_file=None):
+    def __init__(self, config_path, force=False, dryrun=False, out_file=None):
         with open(config_path, 'r') as f:
             self.config = json.load(f)
 
         self.mail = None
         self.force = force
+        self.dryrun = dryrun
         self.folder = 'INBOX'
         self.out_file_path = out_file
 
@@ -132,7 +133,7 @@ class EmailCleaner:
 
     def check_auth(self):
         """
-        [TODO 完成] 授权配置说明:
+        授权配置说明:
           - Yahoo/Gmail 均需使用 App Password
           - 本方法将按优先级查找密码，连接到 IMAP 服务器，
             并以 READ-WRITE 模式选择 INBOX 以确认全部权限。
@@ -195,6 +196,27 @@ class EmailCleaner:
                 parts.append(content)
         return "".join(parts)
 
+    def is_attachment_ignored(self, name):
+        """根据预定义模板判断附件名是否应被忽略。
+
+        模板列表 `attachment_ignore_pattern` 使用 `?` 作为单字符通配符，
+        例如 `image???.jpg`、`image???.png`。
+        """
+        if not name:
+            return False
+        patterns = [
+            r"image\d+\.jpg",
+            r"image\d+\.png",
+            r"image\d+\.gif",
+            r"Picture \(Device Independent Bitmap\).*\.jpg"
+        ]
+        nm = name.strip()
+        for regex in patterns:
+            regex = '^' + regex + '$'
+            if re.match(regex, nm, re.IGNORECASE):
+                return True
+        return False
+
     def has_attachment(self, msg):
         """
         针对 Authentisign 等复杂嵌套邮件优化的附件检测逻辑。
@@ -211,18 +233,15 @@ class EmailCleaner:
 
             # 3. 提取文件名（处理各种编码情况）
             filename = part.get_filename()
-            if filename:
+            if filename and not self.is_attachment_ignored(filename):
                 filename = self.decode_mime_header(filename)
+                # A: 只要有明确的文件名，且不是正文类型，就视为附件
+                # 排除 text/plain 和 text/html 是为了防止某些客户端把正文也带上文件名
+                if filename and content_type not in ['text/plain', 'text/html']:
+                    return True    
             
             # 4. 提取布局属性
             disposition = str(part.get("Content-Disposition", "")).lower()
-
-            # --- 核心判定逻辑 ---
-
-            # A: 只要有明确的文件名，且不是正文类型，就视为附件
-            # 排除 text/plain 和 text/html 是为了防止某些客户端把正文也带上文件名
-            if filename and content_type not in ['text/plain', 'text/html']:
-                return True
 
             # B: 明确标记为 attachment 的部分
             if 'attachment' in disposition:
@@ -266,6 +285,17 @@ class EmailCleaner:
         except Exception:
             return False
 
+    def find_and_append_attachments(self, names, text):
+        """从文本中提取 附件名 filename="..." 或 name="..." 并添加到 names 列表"""
+        for m in re.finditer(r'filename\s*\=\s*"?([^";\)]+)"?', text, flags=re.IGNORECASE):
+            fn = m.group(1).strip()
+            if fn and not self.is_attachment_ignored(fn) and fn not in names:
+                names.append(fn)
+        for m in re.finditer(r'name\s*\=\s*"?([^";\)]+)"?', text, flags=re.IGNORECASE):
+            fn = m.group(1).strip()
+            if fn and not self.is_attachment_ignored(fn) and fn not in names:
+                names.append(fn)
+
     def get_attachment_names_from_structure(self, structure):
         """从 BODYSTRUCTURE 提取附件文件名列表（如果能解析到）"""
         names = []
@@ -280,19 +310,12 @@ class EmailCleaner:
                     elif isinstance(item, bytes):
                         try:
                             text = item.decode('utf-8', errors='ignore')
-                            # 查找 filename="..." 或 name="..."
-                            for m in re.finditer(r'filename\s*=\s*"?([^";\)]+)"?', text, flags=re.IGNORECASE):
-                                names.append(m.group(1).strip())
-                            for m in re.finditer(r'name\s*=\s*"?([^";\)]+)"?', text, flags=re.IGNORECASE):
-                                names.append(m.group(1).strip())
+                            self.find_and_append_attachments(names, text)
                         except Exception:
                             continue
                     elif isinstance(item, str):
-                        for m in re.finditer(r'filename\s*=\s*"?([^";\)]+)"?', item, flags=re.IGNORECASE):
-                            names.append(m.group(1).strip())
-                        for m in re.finditer(r'name\s*=\s*"?([^";\)]+)"?', item, flags=re.IGNORECASE):
-                            names.append(m.group(1).strip())
-
+                            self.find_and_append_attachments(names, item)
+       
         try:
             walk(structure)
         except Exception:
@@ -319,7 +342,7 @@ class EmailCleaner:
                     filename = self.decode_mime_header(filename)
                 except Exception:
                     pass
-                if filename and filename not in names:
+                if filename and not self.is_attachment_ignored(filename) and filename not in names:
                     names.append(filename)
         return names
 
@@ -408,8 +431,13 @@ class EmailCleaner:
     # ──────────────────────────────────────────
     def run_cleanup(self):
         self.log_msg(f"[*] 模式: {'强制删除 (force)' if self.force else '交互确认'}")
-        self.log_msg(f"[*] 全删日期: {self.all_before.date()}")
-        self.log_msg(f"[*] 部分删除日期: {self.unimportant_before.date()}")
+        if self.all_before is not None:
+            self.log_msg(f"[*] 全删日期: {self.all_before.date()}")
+            all_before_str = self.all_before.strftime("%d-%b-%Y")
+        if self.unimportant_before is not None:
+            self.log_msg(f"[*] 部分删除日期: {self.unimportant_before.date()}")
+            unimportant_before_str = self.unimportant_before.strftime("%d-%b-%Y")
+
         if self.start_date:
             self.log_msg(f"[*] 起始搜索日期: {self.start_date.date()}")
 
@@ -418,53 +446,59 @@ class EmailCleaner:
 
         # 使用 IMAP SENTBEFORE 搜索（按发件日期而非接收日期）
         # 分两次搜索: 一次全删范围, 一次部分删除范围
-        all_before_str = self.all_before.strftime("%d-%b-%Y")
-        unimportant_before_str = self.unimportant_before.strftime("%d-%b-%Y")
 
         candidates = []  # [(mail_id, msg_date, sender_email, subject, reason)]
 
         # ── 搜索全删范围 ──
-        if self.start_date:
-            start_str = self.start_date.strftime("%d-%b-%Y")
-            res, data = self.mail.search(None, f'(SENTSINCE {start_str} SENTBEFORE {all_before_str})')
+        if self.all_before is None:
+            print(f"[*] 全删范围未配置，跳过全删范围扫描")
         else:
-            res, data = self.mail.search(None, f'(SENTBEFORE {all_before_str})')
-        if res == 'OK':
-            mail_ids = data[0].split()
-            total = len(mail_ids)
-            print(f"[*] 全删范围内邮件 (≤{self.all_before.date()}): {total} 封")
-            for i in range(0, total, batch_size):
-                batch = mail_ids[i:i+batch_size]
-                print(f"[*] 处理批次 {i//batch_size + 1}: {len(batch)} 封邮件")
-                self._classify_emails(batch, 'ALL', candidates)
-                self.process_candidates(candidates)
-                candidates = []  # 清空候选列表，为下一范围准备
-
-        else:
-            print(f"[-] 全删范围搜索失败")
+            if self.start_date:
+                start_str = self.start_date.strftime("%d-%b-%Y")
+                res, data = self.mail.search(None, f'(SINCE {start_str} BEFORE {all_before_str})')
+            else:
+                res, data = self.mail.search(None, f'(BEFORE {all_before_str})')
+            if res == 'OK':
+                mail_ids = data[0].split()
+                total = len(mail_ids)
+                print(f"[*] 全删范围内邮件 (≤{self.all_before.date()}): {total} 封")
+                for i in range(0, total, batch_size):
+                    batch = mail_ids[i:i+batch_size]
+                    print(f"[*] 处理批次 {i//batch_size + 1}: {len(batch)} 封邮件")
+                    self._classify_emails(batch, 'ALL', candidates)
+                    self.process_candidates(candidates)
+                    candidates = []  # 清空候选列表，为下一范围准备
+            else:
+                print(f"[-] 全删范围搜索失败")
 
         # ── 搜索部分删除范围 ──
-        # 部分删除范围通常是 all_before ~ unimportant_before；如果配置了 start_date，
-        # 则下界取两者中较晚的一个
-        partial_since_dt = self.all_before
-        if self.start_date and self.start_date > partial_since_dt:
-            partial_since_dt = self.start_date
-        partial_since_str = partial_since_dt.strftime("%d-%b-%Y")
-        res, data = self.mail.search(None,
-            f'(SENTSINCE {partial_since_str} SENTBEFORE {unimportant_before_str})')
-        if res == 'OK':
-            mail_ids = data[0].split()
-            total = len(mail_ids)
-            print(f"[*] 部分删除范围 ({self.all_before.date()} ~ {self.unimportant_before.date()}): {total} 封")
-            for i in range(0, total, batch_size):
-                batch = mail_ids[i:i+batch_size]
-                print(f"[*] 处理批次 {i//batch_size + 1}: {len(batch)} 封邮件")
-                self._classify_emails(batch, 'PARTIAL', candidates)
-                self.process_candidates(candidates)
-                candidates = []  # 清空候选列表，为下一范围准备
+        # 部分删除范围通常是 all_before ~ unimportant_before
+        # 如果 all_before 为空则部分删除范围为start_date ~ unimportant_before
+        if self.unimportant_before is None: 
+            print(f"[*] 部分删除范围未配置，跳过部分删除范围扫描")
+        else: 
+            if self.all_before is not None: 
+                partial_since_dt = self.all_before
+            else:
+                 partial_since_dt = self.start_date
+            if self.start_date and self.start_date > partial_since_dt:
+                partial_since_dt = self.start_date
+            partial_since_str = partial_since_dt.strftime("%d-%b-%Y")
+            res, data = self.mail.search(None,
+                f'(SINCE {partial_since_str} BEFORE {unimportant_before_str})')
+            if res == 'OK':
+                mail_ids = data[0].split()
+                total = len(mail_ids)
+                print(f"[*] 部分删除范围 ({partial_since_dt.date()} ~ {self.unimportant_before.date()}): {total} 封")
+                for i in range(0, total, batch_size):
+                    batch = mail_ids[i:i+batch_size]
+                    print(f"[*] 处理批次 {i//batch_size + 1}: {len(batch)} 封邮件")
+                    self._classify_emails(batch, 'PARTIAL', candidates)
+                    self.process_candidates(candidates)
+                    candidates = []  # 清空候选列表，为下一范围准备
 
-        else:
-            print(f"[-] 部分删除范围搜索失败")
+            else:
+                print(f"[-] 部分删除范围搜索失败")
 
     def process_candidates(self, candidates):
         """处理候选邮件列表：显示、确认并删除"""
@@ -474,11 +508,13 @@ class EmailCleaner:
         if self.force:
             print(f"共 {len(candidates)} 封邮件将被删除:")
             for i, (mid, d, sender, subj, reason) in enumerate(candidates, 1):
-                log = f"[+] 删除邮件: {d.date()} {sender} | {subj[:60]} | {reason}"
+                log = f"[+] {self.dryrun and '(Dry Run)' or ''} 删除邮件: {d.date()} {sender} | {subj[:60]} | {reason}"
                 self.log_msg(log) 
-                self.mail.store(mid, '+FLAGS', '\\Deleted')
-            self.mail.expunge()
-            print(f"[+] 已删除 {len(candidates)} 封邮件。")
+                if not self.dryrun:
+                    self.mail.store(mid, '+FLAGS', '\\Deleted')
+            if not self.dryrun:
+                self.mail.expunge()
+            print(f"[+] {self.dryrun and '(Dry Run)' or ''} 已删除 {len(candidates)} 封邮件。")
   
         else: 
             for i, (mid, d, sender, subj, reason) in enumerate(candidates, 1):
@@ -492,9 +528,11 @@ class EmailCleaner:
                     print("\n[!] 用户终止操作。")
                     sys.exit(0)
                 elif confirm == 'y':
-                    self.mail.store(mid, '+FLAGS', '\\Deleted')
-                    self.mail.expunge()
-                    log = f"[+] 删除邮件: {sender} | {subj[:60]} | {d.date()} "
+                    if not self.dryrun:
+                        self.mail.store(mid, '+FLAGS', '\\Deleted')
+                        self.mail.expunge()
+       
+                    log = f"[+] {self.dryrun and '(Dry Run)' or ''} 删除邮件: {sender} | {subj[:60]} | {d.date()} "
                     self.log_msg(log) 
                 else:
                     log = f"[+] 跳过邮件: {sender} | {subj[:60]} | {d.date()} "
@@ -626,9 +664,12 @@ def main():
     parser.add_argument("-cfg", "--config", required=True, help="Path to JSON config file")
     parser.add_argument("-f", "--force", action="store_true", help="Force deletion without confirmation")
     parser.add_argument("-o", "--output", help="Path to log file")
+    parser.add_argument("-d", "--date", help="Run cleanup for a single date (YYYY-MM-DD), ignore config date ranges")
+    parser.add_argument("-m", "--mode", help="cleanup mode, all or partial, this param is only used when -d is specified")
+    parser.add_argument("--dry", action="store_true", help="Dry run mode, will show message but will not implement the deletion")
 
     args = parser.parse_args()
-
+ 
     if not os.path.exists(args.config):
         print(f"[-] 配置文件不存在: {args.config}")
         sys.exit(1)
@@ -638,7 +679,31 @@ def main():
         with open(args.output, 'w', encoding='utf-8') as f:
             pass
 
-    cleaner = EmailCleaner(args.config, force=args.force, out_file=args.output)
+    cleaner = EmailCleaner(args.config, force=args.force, dryrun=args.dry, out_file=args.output)
+
+    target_date = None
+    mode = None
+    if args.date:
+        try:
+            target_date = datetime.strptime(args.date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            if args.mode and args.mode.lower() in ('all', 'partial'):
+                mode = args.mode.lower()
+            else:
+                print(f"[-] 当指定 -d 参数时，必须同时指定 -m 参数为 'all' 或 'partial'")
+                sys.exit(1)
+        except ValueError:
+            print(f"[-] 无效的日期格式: {args.date}，应为 YYYY-MM-DD")
+            sys.exit(1)
+        # 这里我们覆盖 cleaner 中的扫描日期，使其只处理指定日期的邮件
+        if mode == 'all':
+            cleaner.all_before = target_date + timedelta(days=1)  # 包含 target_date 当天的邮件
+            cleaner.start_date = target_date  # 从 target_date 开始扫描
+            cleaner.unimportant_before = None  # 不使用部分删除范围
+        elif mode == 'partial':
+            cleaner.unimportant_before = target_date + timedelta(days=1)  # 包含 target_date 当天的邮件
+            cleaner.start_date = target_date  # 从 target_date 开始扫描
+            cleaner.all_before = None  # 不使用全删范围
+
     if cleaner.check_auth():
         cleaner.run_cleanup()
         sys.exit(0)

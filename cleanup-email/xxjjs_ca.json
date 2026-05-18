@@ -3,14 +3,17 @@
     "service_provider": "yahoo",
     "batch_size": 10,
     "important_sender": [
-        ".*@embark\\.ca"
+        ".*@([a-zA-Z0-9-]+\\.)*embark\\.ca$"
     ],
     "important_email_subjects": [
-      "City of Bellevue, WA Invoice"
+      "City of Bellevue, WA Invoice",
+      "^Your Amazon.com order .* has shipped",
+      "^Ordered:\\s*\"([^\"]+)\"",
+      "Thanks for your delivery order, Jason"
     ],
     "start_date": "2022-1-1",
     "remove_all_before": "2024-12-31",
-    "remove_unimportant_before": "2025-12-31",
+    "remove_unimportant_before": "2026-1-31",
     "unimportant_email_subjects": [
         "AutoPay payment reminder",
         "Check in now",
