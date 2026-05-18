@@ -357,17 +357,23 @@ class EmailCleaner:
             return True
         return False
 
-    def is_important_sender(self, sender_email):
-        """
-        配置中的 important_sender 支持正则表达式。
-        例: ".*@embark\\.ca" 保留所有 embark.ca 的发件人。
-        """
-        for pattern in self.config.get('important_sender', []):
-            try:
-                if re.search(pattern, sender_email, re.IGNORECASE):
-                    return True
+    def is_important_email(self, sender_email, subject):
+        """综合判断邮件是否重要（发件人或标题匹配）"""
+        for pattern in self.config.get('important_emails', []):
+            sender_pattern = pattern[0].strip()
+            subject_pattern = pattern[1].strip()
+            if sender_pattern == '' and subject_pattern == '':
+                continue  # 跳过空规则
+            try:                
+                if sender_pattern and not re.search(sender_pattern, sender_email, re.IGNORECASE):
+                    continue
+                if subject_pattern and not re.search(subject_pattern, subject, re.IGNORECASE):
+                    continue
+                return True  # 发件人和标题都匹配（或其中之一为空表示不限制）
             except re.error as e:
                 print(f"[-] 正则错误: {pattern} -> {e}")
+                continue
+
         return False
 
     def _parse_robust_date(self, date_str):
@@ -399,19 +405,6 @@ class EmailCleaner:
                     except:
                         continue
         return None
-
-    def is_important_subject(self, subject):
-        """
-        配置中的 important_email_subjects 支持正则表达式。
-        例: "City of Bellevue, WA Invoice" 保留该标题的邮件。
-        """
-        for pattern in self.config.get('important_email_subjects', []):
-            try:
-                if re.search(pattern, subject, re.IGNORECASE):
-                    return True
-            except re.error as e:
-                print(f"[-] 正则错误: {pattern} -> {e}")
-        return False
 
     def is_unimportant_subject(self, subject):
         """
@@ -616,20 +609,19 @@ class EmailCleaner:
                     except Exception:
                         pass
                 is_reply_msg = self.is_reply(msg)
-                important = self.is_important_sender(sender_email)
-                important_subject = self.is_important_subject(subject)
-
+                important_email = self.is_important_email(sender_email, subject)
+                
                 # 保护规则: 附件 / 回复 / 重要发件人 / 重要标题 → 不删
-                if has_attachment or is_reply_msg or important or important_subject:
+                if has_attachment or is_reply_msg or important_email:
                     reason = None
                     if has_attachment:
                         reason = '有附件'
                     elif is_reply_msg:
                         reason = '回复邮件'
-                    elif important:
-                        reason = '重要发件人'
+                    elif important_email:
+                        reason = '重要邮件'
                     else:
-                        reason = '重要标题'
+                        reason = 'unknown-- BUG, missing something'
                     self.log_msg(f"[*] {reason}: {sender} | {subject[:60]} | {dt.date()}")
                     if reason == '有附件' and attachment_names:
                         for name in attachment_names:
