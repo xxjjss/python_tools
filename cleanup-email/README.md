@@ -36,6 +36,12 @@ python3 cleanup-email.py -cfg xxjjs_ca.json -f
 python3 cleanup-email.py -cfg xxjjs_ca.json -o cleanup.log
 ```
 
+### 单日扫描，dryrun删除当天所有非重要文件, 观察信息并不执行删除操作：
+
+```bash
+python3 cleanup-email.py -cfg xxjjs_ca.json -d 2026-5-17 -m all -f --dry
+```
+
 ## 配置说明（JSON 字段简介）
 
 ### 示例配置（摘录）：
@@ -48,7 +54,7 @@ python3 cleanup-email.py -cfg xxjjs_ca.json -o cleanup.log
   "remove_all_before": "2020-01-01",
   "remove_unimportant_before": "2022-01-01",
   "important_emails": [
-    [".*@yourcompany\\.com", "Invoice"],
+    [".*@yourcompany\\.com", ""],
     ["service@paypal\\.com", ".*sent you .*USD"]
   ],
   "unimportant_email_subjects": ["newsletter", "promo"],
@@ -61,8 +67,8 @@ python3 cleanup-email.py -cfg xxjjs_ca.json -o cleanup.log
 
 - `auth.secret`：如果在配置中填写了有效的 App Password，会优先使用。否则脚本会尝试从 macOS 钥匙串、`~/.secrets` 目录或环境变量中解析密码。
 - 请确保 IMAP 权限与 App Password 已启用（Gmail 的 App Password 或 Yahoo 的应用令牌）。
-- 为防止超时，请设置恰当 `batch_size`, 即每次从邮箱中读取的邮件数量
-- 建议首次运行请不要使用 `-f`，先用交互模式确认匹配结果。
+- 为防止超时，请设置恰当 `batch_size`, 即每次从邮箱中读取的邮件数量，缺省为10
+- 建议首次运行请不要使用 `-f`，先用交互模式确认匹配结果，或使用`--dry` 
 
 ### `important_emails` 规则说明
 
