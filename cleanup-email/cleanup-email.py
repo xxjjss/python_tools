@@ -357,9 +357,9 @@ class EmailCleaner:
             return True
         return False
 
-    def is_important_email(self, sender_email, subject):
-        """综合判断邮件是否重要（发件人或标题匹配）"""
-        for pattern in self.config.get('important_emails', []):
+    def is_email_matched(self, sender_email, subject, patterns):
+        """综合判断邮件是否发件人和标题匹配"""
+        for pattern in patterns:
             sender_pattern = pattern[0].strip()
             subject_pattern = pattern[1].strip()
             if sender_pattern == '' and subject_pattern == '':
@@ -376,6 +376,14 @@ class EmailCleaner:
 
         return False
 
+    def is_important_email(self, sender_email, subject):
+        """综合判断邮件是否重要"""
+        return self.is_email_matched(sender_email, subject, self.config.get('important_emails', []))
+
+    def is_unimportant_email(self, sender_email, subject):
+        """综合判断邮件是否非重要"""
+        return self.is_email_matched(sender_email, subject, self.config.get('unimportant_emails', []))
+    
     def _parse_robust_date(self, date_str):
         """
         鲁棒地解析邮件日期，处理非标准格式如 "11/17/2010"
@@ -405,19 +413,6 @@ class EmailCleaner:
                     except:
                         continue
         return None
-
-    def is_unimportant_subject(self, subject):
-        """
-        配置中的 unimportant_email_subjects 支持正则表达式。
-        例: "Check in now" 匹配包含 "check in now" 的标题。
-        """
-        for pattern in self.config.get('unimportant_email_subjects', []):
-            try:
-                if re.search(pattern, subject, re.IGNORECASE):
-                    return True
-            except re.error as e:
-                print(f"[-] 正则错误: {pattern} -> {e}")
-        return False
 
     # ──────────────────────────────────────────
     # 扫描 & 删除
@@ -636,9 +631,9 @@ class EmailCleaner:
 
                 elif scope == 'PARTIAL':
                     # 部分删除范围: 仅删除标题匹配的
-                    if self.is_unimportant_subject(subject):
+                    if self.is_unimportant_email(sender_email, subject):
                         self.log_msg(f"[*] 删除非重要标题: {sender} | {subject[:60]} | {dt.date()}") 
-                        candidates.append((mid, dt, sender_email, subject, "不重要标题"))
+                        candidates.append((mid, dt, sender_email, subject, "不重要邮件，立刻删除"))
                         to_delete_mails += 1
                     else:
                         self.log_msg(f"[*] 可删除邮件: {sender} | {subject[:60]} | {dt.date()}")
