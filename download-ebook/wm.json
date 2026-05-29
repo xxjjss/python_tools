@@ -1,0 +1,9 @@
+{
+    "base_url": "https://www.piaotia.com/html/4/4219/",
+    "save_dir": "/Users/xxjjss/Downloads/WM2",
+    "section_pattern": "<a\\s+href=\\\"(\\d+)\\.html\\\">([^<]*第[^<]*章[^<]*)</a>",
+    "file_url_template": "{base_url}{m1}.html",
+    "save_content_file": "晚明--目录.html",
+    "save_file": "{m1}_{m2}.html",
+    "delay_on_error": 20
+}
