@@ -1,0 +1,73 @@
+# Sticky Note widget configuration.
+#
+# On first launch this template is copied to `config.yaml` in the same
+# directory (the install dir once installed: ~/.local/share/sticky-note/).
+# Edit `config.yaml`, not this template. Re-running the widget picks up changes.
+
+# GUS email address used to query your work items.
+# Leave empty on a fresh install: the launcher prompts for it on first run and
+# writes it back here. If both this value and the email recorded in the journal
+# are set but differ, the widget refuses to start (prevents mixing two users'
+# data). To switch users, update this value and point journal_path at the
+# matching journal directory.
+user: ""
+
+# Directory holding the daily journal files (YYYY-MM-DD-journal.md).
+# ~ is expanded to your home directory.
+journal_path: "~/Journal"
+
+# How often (in minutes) the widget re-queries GUS. Must be a positive integer.
+refresh_interval_minutes: 15
+
+# How often (in minutes) the widget polls the background agents it launched,
+# writing each finished agent's output back into the journal. Positive integer.
+agent_poll_interval_minutes: 5
+
+# Whether the widget automatically launches the `tcm-wi-worker` agent for work
+# items (without asking). Default false: the widget never spawns an agent on its
+# own; agents are only launched on an explicit user action. Set to true to let
+# the widget auto-invoke tcm-wi-worker as WIs appear.
+auto_invoke_wi_worker: false
+
+# Loopback TCP port for the external control socket. The running widget listens
+# on 127.0.0.1:<socket_port> for one-line JSON commands (e.g. an immediate
+# "refresh" signal sent by `sticky-note-refresh` or after `sticky-note-add`), so
+# external changes appear at once instead of waiting for the next auto-refresh.
+# Bound to loopback only (never reachable off-machine). Change this if the
+# default collides with another service; must be 1-65535.
+socket_port: 48327
+
+# Agents the widget may launch in the background (via `claude --agent <name>`).
+#
+# `default` holds the settings applied to every agent; any key an individual
+# agent omits falls back to the value under `default`. Most keys map to
+# `claude` CLI flags: model, effort, permission-mode, output-format,
+# max-budget-usd. `timeout-minutes` is enforced by the launcher (a run
+# exceeding it is killed) so a hung background agent can't burn its budget.
+#
+# Each named entry below `default` is an agent the widget is allowed to spawn.
+# Requesting an agent NOT listed here is an error ("agent xxxx was not defined
+# in config"). An empty entry (like tcm-wi-worker) inherits every default.
+agents:
+  default:
+    model: opus
+    effort: medium
+    permission-mode: dontAsk
+    output-format: json
+    max-budget-usd: 5
+    timeout-minutes: 15
+  tcm-wi-worker:
+    effort: high
+    timeout-minutes: 30
+    # Space-separated tool allowlist (forwarded as `--allowedTools`). Under
+    # permission-mode dontAsk any tool NOT listed here is auto-denied, so this
+    # must mirror the agent's declared `tools:` set — including the GUS MCP tools
+    # it uses to bump the WI and post chatter — or a headless run stalls on
+    # denied access (filesystem or MCP).
+    allowedTools: "Agent Skill Bash Read Write Edit WebFetch mcp__plugin_gus_gus_server__query_gus_records mcp__plugin_gus_gus_server__update_gus_work_item mcp__plugin_gus_gus_server__post_gus_chatter mcp__plugin_gus_gus_server__query_gus_chatter"
+  tcm-wi-researcher:
+    effort: high
+    timeout-minutes: 30
+    # Must include the Google Docs + GUS + search MCP tools the researcher calls;
+    # otherwise dontAsk denies docs_create and the run fails at publish time.
+    allowedTools: "Agent Skill Bash Read Write Edit WebFetch mcp__plugin_gus_gus_server__query_gus_records mcp__plugin_gus_gus_server__update_gus_work_item mcp__plugin_gus_gus_server__post_gus_chatter mcp__plugin_gus_gus_server__query_gus_chatter mcp__plugin_google_google__docs_create mcp__plugin_google_google__docs_get mcp__plugin_google_google__docs_comments mcp__plugin_search_search__search"
