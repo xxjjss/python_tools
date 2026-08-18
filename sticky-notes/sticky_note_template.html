@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {
+    --bg: #FFFDE7;
+    --text: #000000;
+    --border: #E0C800;
+    --deep-blue: #1565C0;
+    --dark-red: #B71C1C;
+    --border-radius: 8px;
+    --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    --section-gap: 10px;
+    --row-height: 22px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    min-width: 300px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  #content {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 6px;
+  }
+
+  /* ---- Header ---- */
+  #header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #FFF9C4;
+    border-bottom: 1px solid var(--border);
+    padding: 4px 8px;
+    cursor: grab;
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+    user-select: none;
+    position: relative;
+  }
+  #header.dragging { cursor: grabbing; }
+  #header-title { font-weight: 600; font-size: 12px; }
+  #header-meta { font-size: 10px; color: #888; display: inline-flex; align-items: center; gap: 3px; }
+  #refresh-now {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 0;
+    flex-shrink: 0;
+    color: #F9A825;
+    opacity: 0.85;
+  }
+  #refresh-now:hover { opacity: 1; }
+  #refresh-now.refreshing { opacity: 0.4; }
+  #header-collapse {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    color: #555;
+    padding: 0 2px;
+  }
+
+  /* ---- Info button + popover ---- */
+  #info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #1565C0;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    font-style: italic;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  #info-popover {
+    display: none;
+    position: absolute;
+    top: 30px;
+    right: 8px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 11px;
+    color: #333;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    z-index: 100;
+    white-space: nowrap;
+    min-width: 140px;
+  }
+  #info-popover.visible { display: block; }
+  #info-popover p { margin: 2px 0; }
+
+  /* ---- Sections ---- */
+  .section { padding: 4px 8px; }
+  .section-title {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #555;
+    margin-bottom: 3px;
+    border-bottom: 1px solid #EEE;
+    padding-bottom: 2px;
+  }
+  .section-title-text { flex: 1; }
+  .section-title-actions { display: flex; gap: 4px; margin-left: 6px; }
+
+  /* ---- WI rows ---- */
+  .wi-row {
+    display: flex;
+    align-items: center;
+    height: var(--row-height);
+    overflow: hidden;
+    gap: 4px;
+    padding: 1px 0;
+  }
+  .wi-agent-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    vertical-align: middle;
+  }
+  .wi-agent-icon[data-tooltip] { cursor: default; }
+
+  /* Floating tooltip for the agent icon (one shared node, appended to body so
+     the row's overflow:hidden can't clip it). One agent status per line. */
+  #agent-tooltip {
+    display: none;
+    position: fixed;
+    z-index: 200;
+    background: #333;
+    color: #fff;
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 5px 8px;
+    border-radius: 5px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.28);
+    white-space: nowrap;
+    pointer-events: none;
+    max-width: 280px;
+  }
+  #agent-tooltip.visible { display: block; }
+  #agent-tooltip .tt-line { margin: 1px 0; }
+  #agent-tooltip .tt-running { font-weight: 600; }
+
+  /* ---- Agent-details panel (double-click the icon) ---- */
+  #agent-details-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    background: rgba(0,0,0,0.28);
+  }
+  #agent-details-overlay.visible { display: block; }
+  #agent-details-panel {
+    position: absolute;
+    top: 24px;
+    left: 8px;
+    right: 8px;
+    bottom: 24px;
+    background: #FFFDF2;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #agent-details-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #FFF9C4;
+    border-bottom: 1px solid var(--border);
+    padding: 4px 8px;
+    font-weight: 600;
+    font-size: 11px;
+  }
+  #agent-details-close {
+    background: none; border: none; cursor: pointer;
+    font-size: 14px; color: #555; padding: 0 2px;
+  }
+  /* Body is a read-only, user-selectable/copyable region. */
+  #agent-details-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 8px;
+    font-size: 11px;
+    line-height: 1.4;
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+  }
+  .ad-record { margin-bottom: 10px; }
+  .ad-record + .ad-record { border-top: 1px solid #EEE; padding-top: 8px; }
+  .ad-name { font-weight: 700; }
+  .ad-field { padding-left: 14px; }
+  .ad-field .ad-key { color: #666; }
+  .ad-result-toggle {
+    padding-left: 14px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    color: var(--deep-blue);
+  }
+  .ad-result-toggle .ad-twisty {
+    display: inline-block;
+    width: 12px;
+    font-weight: 700;
+    text-align: center;
+  }
+  .ad-result-body {
+    display: none;
+    padding-left: 28px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10.5px;
+    color: #222;
+  }
+  .ad-result-body.expanded { display: block; }
+  .ad-empty { color: #999; font-style: italic; }
+  .wi-link {
+    font-weight: 600;
+    white-space: nowrap;
+    text-decoration: none;
+    color: inherit;
+    flex-shrink: 0;
+  }
+  .wi-link:hover { text-decoration: underline; }
+  .wi-subject {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  /* TODO / In Progress subjects are double-clickable to invoke an agent.
+     Suppress text selection so the double-click invokes instead of selecting
+     the word under the cursor. */
+  .wi-subject-invokable {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .wi-subject-invokable:hover { text-decoration: underline dotted; }
+  .color-deep-blue { color: var(--deep-blue); }
+  .color-dark-red  { color: var(--dark-red); }
+
+  /* ---- TODO collapse ---- */
+  #todo-other-list { display: none; }
+  #todo-other-list.expanded { display: block; }
+  #collapse-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--deep-blue);
+    padding: 2px 0;
+    text-decoration: underline;
+  }
+
+  /* ---- Others ---- */
+  .others-row {
+    display: flex;
+    align-items: center;
+    height: var(--row-height);
+    gap: 5px;
+    overflow: hidden;
+  }
+  .others-row input[type="checkbox"] { flex-shrink: 0; cursor: pointer; }
+  .others-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .others-link {
+    font-weight: 600;
+    text-decoration: none;
+    color: inherit;
+  }
+  .others-link:hover { text-decoration: underline; }
+  /* Task text is double-clickable to edit its comment. Suppress selection so
+     the double-click opens the editor instead of selecting the word. A task
+     that has a comment shows a dotted underline as an affordance. */
+  .others-text {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .others-text.has-comment { text-decoration: underline dotted; text-underline-offset: 2px; }
+
+  /* Floating comment tooltip (shared node, appended to body so the row's
+     overflow:hidden can't clip it). Multi-line, so it wraps unlike the agent tip. */
+  #comment-tooltip {
+    display: none;
+    position: fixed;
+    z-index: 200;
+    background: #333;
+    color: #fff;
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 5px 8px;
+    border-radius: 5px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.28);
+    white-space: pre-wrap;
+    word-break: break-word;
+    pointer-events: none;
+    max-width: 260px;
+  }
+  #comment-tooltip.visible { display: block; }
+  .action-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0;
+    line-height: 1;
+  }
+  #add-task-form {
+    display: none;
+    padding: 3px 0;
+    gap: 4px;
+    align-items: center;
+  }
+  #add-task-form.visible { display: flex; }
+  #add-task-input {
+    flex: 1;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 4px;
+    background: #FFFFF0;
+  }
+  .small-btn {
+    font-size: 11px;
+    background: #FFF9C4;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    cursor: pointer;
+  }
+
+  .placeholder { color: #AAA; font-style: italic; font-size: 11px; padding: 2px 0; }
+</style>
+</head>
+<body>
+
+<!-- Agent-status hover tooltip (shared, positioned on hover) -->
+<div id="agent-tooltip"></div>
+
+<!-- Non-WI task comment hover tooltip (shared, positioned on hover) -->
+<div id="comment-tooltip"></div>
+
+<!-- Agent-details read-only panel (opened by double-clicking the agent icon) -->
+<div id="agent-details-overlay">
+  <div id="agent-details-panel">
+    <div id="agent-details-head">
+      <span id="agent-details-title">Agent runs</span>
+      <button id="agent-details-close" title="Close">×</button>
+    </div>
+    <div id="agent-details-body"></div>
+  </div>
+</div>
+
+<!-- Header -->
+<div id="header">
+  <span id="header-title">Sticky Note <span id="header-date" style="font-weight:400;color:#B71C1C;"></span></span>
+  <span id="header-meta">
+    <button id="refresh-now" title="Double-click to refresh now">⚡</button>
+    <span id="header-meta-text">—</span>
+  </span>
+  <span style="display:inline-flex;align-items:center;gap:3px;">
+    <button id="info-btn" title="Version info">i</button>
+    <button id="header-collapse" title="Minimize">−</button>
+  </span>
+  <div id="info-popover">
+    <p><strong>Sticky Note</strong></p>
+    <p id="info-version"></p>
+    <p id="info-refresh"></p>
+  </div>
+</div>
+
+<div id="content">
+
+<!-- In Progress -->
+<div class="section">
+  <div class="section-title">In Progress</div>
+  <div id="in-progress-list"></div>
+</div>
+
+<!-- Done -->
+<div class="section">
+  <div class="section-title">Done (last 24h)</div>
+  <div id="done-list"></div>
+</div>
+
+<!-- TODO -->
+<div class="section">
+  <div class="section-title">TODO</div>
+  <div id="todo-current-list"></div>
+  <div id="todo-other-wrapper"></div>
+</div>
+
+<!-- Others -->
+<div class="section">
+  <div class="section-title">
+    <span class="section-title-text">Non-WI Tasks</span>
+    <span class="section-title-actions">
+      <button class="action-btn" id="add-btn" title="Add task">+</button>
+      <button class="action-btn" id="remove-btn" title="Remove task" style="color:#B71C1C;font-size:12px;">⊗</button>
+    </span>
+  </div>
+  <div id="others-list"></div>
+  <div id="add-task-form">
+    <input id="add-task-input" type="text" placeholder="New task…" maxlength="200" onfocus="post('request_key_window',{})">
+    <button class="small-btn" id="add-confirm-btn">Add</button>
+    <button class="small-btn" id="add-cancel-btn">Cancel</button>
+  </div>
+</div>
+
+</div><!-- #content -->
+
+<script>
+// ---------------------------------------------------------------------------
+// Messaging
+// ---------------------------------------------------------------------------
+function post(action, payload) {
+  window.webkit.messageHandlers.stickynote.postMessage({ action, payload });
+}
+
+function openLink(url) {
+  post('open_link', { url });
+}
+
+let _initialResizeDone = false;
+function _contentHeight() {
+  const header = document.getElementById('header');
+  const content = document.getElementById('content');
+  return header.getBoundingClientRect().height + content.scrollHeight;
+}
+
+function notifyResize() {
+  // Only auto-resize on first load; after that the user controls panel height.
+  if (_initialResizeDone) return;
+  post('resize', { height: _contentHeight() });
+}
+function notifyResizeForce() {
+  post('resize', { height: _contentHeight() });
+}
+
+// ---------------------------------------------------------------------------
+// Rendering helpers
+// ---------------------------------------------------------------------------
+// Agent-status tooltip: one shared node, positioned next to the hovered icon.
+function showAgentTooltip(icon, lines) {
+  const tip = document.getElementById('agent-tooltip');
+  tip.replaceChildren();
+  lines.forEach(text => {
+    const div = document.createElement('div');
+    div.className = 'tt-line' + (/ is running\b/.test(text) ? ' tt-running' : '');
+    div.textContent = text;
+    tip.appendChild(div);
+  });
+  tip.classList.add('visible');
+  positionAgentTooltip(icon);
+}
+
+function positionAgentTooltip(icon) {
+  const tip = document.getElementById('agent-tooltip');
+  if (!tip.classList.contains('visible')) return;
+  const r = icon.getBoundingClientRect();
+  // Prefer below-right of the icon; flip up / clamp to stay in the viewport.
+  let top = r.bottom + 4;
+  let left = r.left;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  if (left + tw > window.innerWidth - 4) left = window.innerWidth - tw - 4;
+  if (left < 4) left = 4;
+  if (top + th > window.innerHeight - 4) top = r.top - th - 4;
+  if (top < 4) top = 4;
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+}
+
+function hideAgentTooltip() {
+  document.getElementById('agent-tooltip').classList.remove('visible');
+}
+
+// Comment tooltip: shared node, positioned next to the hovered task text.
+function showCommentTooltip(anchor, text) {
+  const tip = document.getElementById('comment-tooltip');
+  tip.textContent = text;
+  tip.classList.add('visible');
+  positionCommentTooltip(anchor);
+}
+
+function positionCommentTooltip(anchor) {
+  const tip = document.getElementById('comment-tooltip');
+  if (!tip.classList.contains('visible')) return;
+  const r = anchor.getBoundingClientRect();
+  let top = r.bottom + 4;
+  let left = r.left;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  if (left + tw > window.innerWidth - 4) left = window.innerWidth - tw - 4;
+  if (left < 4) left = 4;
+  if (top + th > window.innerHeight - 4) top = r.top - th - 4;
+  if (top < 4) top = 4;
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+}
+
+function hideCommentTooltip() {
+  document.getElementById('comment-tooltip').classList.remove('visible');
+}
+
+// ---------------------------------------------------------------------------
+// Agent-details read-only panel (double-click the agent icon).
+const _AD_STATUS_PHRASE = {
+  running: 'is running', done: 'succeeded', failed: 'failed',
+  timed_out: 'timed out', lost: 'lost',
+};
+
+function showAgentDetails(wi) {
+  const records = wi.agent_details || [];
+  const body = document.getElementById('agent-details-body');
+  document.getElementById('agent-details-title').textContent =
+    `${wi.name} — agent runs`;
+  body.replaceChildren();
+
+  if (!records.length) {
+    const p = document.createElement('div');
+    p.className = 'ad-empty';
+    p.textContent = 'No agent runs recorded for this WI.';
+    body.appendChild(p);
+  } else {
+    records.forEach(rec => body.appendChild(makeAgentRecord(rec)));
+  }
+  document.getElementById('agent-details-overlay').classList.add('visible');
+}
+
+function makeAgentRecord(rec) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ad-record';
+
+  // agent-name in bold, not indented.
+  const name = document.createElement('div');
+  name.className = 'ad-name';
+  name.textContent = rec.name || '(unknown agent)';
+  wrap.appendChild(name);
+
+  // Everything else indented: started_at, ended_at, status, session_id.
+  const statusText = _AD_STATUS_PHRASE[rec.status] || rec.status || '';
+  const fields = [
+    ['started_at', rec.started_at],
+    ['ended_at', rec.ended_at],
+    ['status', statusText],
+    ['session_id', rec.session_id],
+  ];
+  fields.forEach(([key, val]) => {
+    const f = document.createElement('div');
+    f.className = 'ad-field';
+    const k = document.createElement('span');
+    k.className = 'ad-key';
+    k.textContent = key + ': ';
+    f.appendChild(k);
+    f.appendChild(document.createTextNode(val || '—'));
+    wrap.appendChild(f);
+  });
+
+  // result: collapsed by default under a +/− twisty; body indented further.
+  const toggle = document.createElement('div');
+  toggle.className = 'ad-result-toggle';
+  const twisty = document.createElement('span');
+  twisty.className = 'ad-twisty';
+  twisty.textContent = '+';
+  toggle.appendChild(twisty);
+  toggle.appendChild(document.createTextNode(' result'));
+
+  const resultBody = document.createElement('div');
+  resultBody.className = 'ad-result-body';
+  resultBody.textContent = rec.result || '(empty)';
+
+  toggle.onclick = () => {
+    const open = resultBody.classList.toggle('expanded');
+    twisty.textContent = open ? '−' : '+';
+  };
+
+  wrap.appendChild(toggle);
+  wrap.appendChild(resultBody);
+  return wrap;
+}
+
+function hideAgentDetails() {
+  document.getElementById('agent-details-overlay').classList.remove('visible');
+}
+
+function makeLink(wi, colorClass) {
+  const url = `https://gus.lightning.force.com/lightning/r/ADM_Work__c/${wi.id}/view`;
+  const a = document.createElement('a');
+  a.className = `wi-link ${colorClass}`;
+  a.textContent = wi.name;
+  a.href = '#';
+  // The W-number always opens GUS on click; it never triggers agent invoke.
+  a.onclick = (e) => { e.preventDefault(); openLink(url); };
+  return a;
+}
+
+function makeWiRow(wi, colorClass, section) {
+  const row = document.createElement('div');
+  row.className = `wi-row ${colorClass}`;
+  // Agent status icon (if any agent is attached to this WI) before the link.
+  if (wi.agent_icon) {
+    const icon = document.createElement('img');
+    icon.className = 'wi-agent-icon';
+    icon.src = wi.agent_icon;
+    // Hover tooltip: one line per agent (running first, then newest first).
+    const lines = wi.agent_status_lines || [];
+    if (lines.length) {
+      icon.dataset.tooltip = '1';
+      icon.title = 'Double-click: agent run details';
+      icon.onmouseenter = () => showAgentTooltip(icon, lines);
+      icon.onmousemove  = () => positionAgentTooltip(icon);
+      icon.onmouseleave = hideAgentTooltip;
+      // Double-click the icon: open the read-only per-agent details panel.
+      icon.ondblclick = (e) => {
+        e.preventDefault();
+        hideAgentTooltip();
+        showAgentDetails(wi);
+      };
+    }
+    row.appendChild(icon);
+  }
+  row.appendChild(makeLink(wi, colorClass));
+  const subj = document.createElement('span');
+  subj.className = 'wi-subject';
+  subj.textContent = wi.subject;
+  // TODO and In Progress WIs support agent invoke, and only via the SUBJECT
+  // text (not the W-number). Double-click the subject to open the dialog.
+  // Done WIs are inert.
+  if (section === 'todo' || section === 'in_progress') {
+    subj.classList.add('wi-subject-invokable');
+    subj.title = 'Double-click: invoke agent on this WI';
+    subj.ondblclick = (e) => {
+      e.preventDefault();
+      post('invoke_agent_dialog', { name: wi.name, id: wi.id });
+    };
+  }
+  row.appendChild(subj);
+  return row;
+}
+
+function wiColorClass(wi, section) {
+  if (section === 'in_progress' && wi.is_waiting) return 'color-dark-red';
+  if (section === 'todo' && wi.is_overdue)        return 'color-dark-red';
+  if (wi.recently_entered)                         return 'color-deep-blue';
+  return '';
+}
+
+function renderList(containerId, items, section) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  if (!items || items.length === 0) {
+    const p = document.createElement('div');
+    p.className = 'placeholder';
+    p.textContent = 'No items';
+    el.appendChild(p);
+    return;
+  }
+  items.forEach(wi => el.appendChild(makeWiRow(wi, wiColorClass(wi, section), section)));
+}
+
+// ---------------------------------------------------------------------------
+// TODO collapse
+// ---------------------------------------------------------------------------
+let _collapsed = true;
+
+function renderTodoOther(items, collapsed) {
+  const wrapper = document.getElementById('todo-other-wrapper');
+  wrapper.innerHTML = '';
+  if (!items || items.length === 0) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'collapse-toggle';
+  btn.onclick = () => {
+    _collapsed = !_collapsed;
+    renderTodoOther(items, _collapsed);
+    post('collapse_toggle', { expanded: !_collapsed });
+    notifyResize();
+  };
+
+  const list = document.createElement('div');
+  list.id = 'todo-other-list';
+
+  items.forEach(wi => list.appendChild(makeWiRow(wi, wiColorClass(wi, 'todo'), 'todo')));
+
+  if (collapsed) {
+    btn.textContent = `+ (${items.length} more)`;
+  } else {
+    btn.textContent = '−';
+    list.classList.add('expanded');
+  }
+
+  wrapper.appendChild(btn);
+  wrapper.appendChild(list);
+}
+
+// ---------------------------------------------------------------------------
+// Others
+// ---------------------------------------------------------------------------
+// Render markdown text into `el`, turning [label](url) into clickable links
+// and leaving everything else as plain text.
+const _MD_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+function appendMarkdown(el, text) {
+  let last = 0;
+  let m;
+  _MD_LINK_RE.lastIndex = 0;
+  while ((m = _MD_LINK_RE.exec(text)) !== null) {
+    if (m.index > last) {
+      el.appendChild(document.createTextNode(text.slice(last, m.index)));
+    }
+    const label = m[1];
+    const url = m[2];
+    const a = document.createElement('a');
+    a.className = 'others-link';
+    a.textContent = label;
+    a.href = '#';
+    a.onclick = (e) => { e.preventDefault(); openLink(url); };
+    el.appendChild(a);
+    last = _MD_LINK_RE.lastIndex;
+  }
+  if (last < text.length) {
+    el.appendChild(document.createTextNode(text.slice(last)));
+  }
+}
+
+function renderOthers(others) {
+  const el = document.getElementById('others-list');
+  el.innerHTML = '';
+  if (!others || others.length === 0) return;
+  others.forEach(task => {
+    const row = document.createElement('div');
+    row.className = 'others-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = task.completed;
+    cb.onchange = () => post('checkbox_toggle', { index: task.index });
+    const span = document.createElement('span');
+    const comment = task.comment || '';
+    span.className = 'others-text'
+      + (task.recently_completed ? ' color-deep-blue' : '')
+      + (comment ? ' has-comment' : '');
+    appendMarkdown(span, task.text);
+    // Hover shows the comment (if any) in a floating tooltip.
+    if (comment) {
+      span.onmouseenter = () => showCommentTooltip(span, comment);
+      span.onmousemove  = () => positionCommentTooltip(span);
+      span.onmouseleave = hideCommentTooltip;
+    }
+    // Double-click the text opens the comment editor (empty if no comment yet).
+    span.title = 'Double-click: edit comment';
+    span.ondblclick = (e) => {
+      e.preventDefault();
+      hideCommentTooltip();
+      post('edit_comment_dialog', { index: task.index, text: task.text, comment });
+    };
+    row.appendChild(cb);
+    row.appendChild(span);
+    el.appendChild(row);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Add task
+// ---------------------------------------------------------------------------
+document.getElementById('add-btn').onclick = () => {
+  const form = document.getElementById('add-task-form');
+  const visible = form.classList.toggle('visible');
+  if (visible) {
+    document.getElementById('add-task-input').focus();
+    notifyResizeForce();
+  } else {
+    document.getElementById('add-task-input').value = '';
+    notifyResizeForce();
+  }
+};
+
+document.getElementById('add-confirm-btn').onclick = () => {
+  const val = document.getElementById('add-task-input').value.trim();
+  if (val) post('add_task', { text: val });
+  document.getElementById('add-task-input').value = '';
+  document.getElementById('add-task-form').classList.remove('visible');
+  notifyResizeForce();
+};
+
+document.getElementById('add-cancel-btn').onclick = () => {
+  document.getElementById('add-task-input').value = '';
+  document.getElementById('add-task-form').classList.remove('visible');
+  notifyResizeForce();
+};
+
+document.getElementById('add-task-input').onkeydown = (e) => {
+  if (e.key === 'Enter')  document.getElementById('add-confirm-btn').click();
+  if (e.key === 'Escape') document.getElementById('add-cancel-btn').click();
+};
+
+// ---------------------------------------------------------------------------
+// Remove task
+// ---------------------------------------------------------------------------
+document.getElementById('remove-btn').onclick = () => {
+  const tasks = (window.STICKER_DATA.others || []).map(t => ({ index: t.index, text: t.text }));
+  if (tasks.length > 0) post('remove_tasks_dialog', { tasks });
+};
+
+// ---------------------------------------------------------------------------
+// Header collapse / expand
+// ---------------------------------------------------------------------------
+let _panelCollapsed = false;
+
+// Apply the collapsed/expanded state to the DOM + panel height. When
+// `persist` is true (a user toggle) the new state is sent to the backend so an
+// auto-refresh reload restores it instead of snapping back to expanded.
+function applyPanelCollapsed(collapsed, persist) {
+  _panelCollapsed = collapsed;
+  document.querySelectorAll('.section').forEach(s => {
+    s.style.display = collapsed ? 'none' : '';
+  });
+  document.getElementById('header-collapse').textContent = collapsed ? '+' : '−';
+  if (collapsed) {
+    const h = document.getElementById('header').getBoundingClientRect().height;
+    post('resize', { height: Math.ceil(h) + 2 });
+  } else {
+    requestAnimationFrame(notifyResizeForce);
+  }
+  if (persist) post('panel_collapse_toggle', { collapsed });
+}
+
+document.getElementById('header-collapse').onclick = () => {
+  applyPanelCollapsed(!_panelCollapsed, true);
+};
+
+// ---------------------------------------------------------------------------
+// Header drag-to-move
+// ---------------------------------------------------------------------------
+(function() {
+  const header = document.getElementById('header');
+  let startX = 0, startY = 0, dragging = false;
+
+  header.addEventListener('mousedown', e => {
+    if (e.target.tagName === 'BUTTON') return;
+    dragging = true;
+    startX = e.screenX;
+    startY = e.screenY;
+    header.classList.add('dragging');
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = e.screenX - startX;
+    const dy = e.screenY - startY;
+    if (dx !== 0 || dy !== 0) {
+      post('move_by', { dx, dy });
+      startX = e.screenX;
+      startY = e.screenY;
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    header.classList.remove('dragging');
+  });
+})();
+
+// ---------------------------------------------------------------------------
+// Refresh-now lightning bolt: double-click forces an immediate GUS re-query and
+// resets the auto-refresh timer so the next tick is a full interval away.
+// ---------------------------------------------------------------------------
+document.getElementById('refresh-now').ondblclick = (e) => {
+  e.stopPropagation();
+  e.target.classList.add('refreshing');   // dim until render() lands fresh data
+  post('refresh_now', {});
+};
+
+// ---------------------------------------------------------------------------
+// Info popover
+// ---------------------------------------------------------------------------
+document.getElementById('info-btn').onclick = (e) => {
+  e.stopPropagation();
+  document.getElementById('info-popover').classList.toggle('visible');
+};
+
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('info-popover');
+  if (pop.classList.contains('visible') && !pop.contains(e.target)) {
+    pop.classList.remove('visible');
+  }
+});
+
+// Agent-details panel: close via × button or clicking the dimmed backdrop
+// (but not the panel itself, so text selection inside stays intact). Esc too.
+document.getElementById('agent-details-close').onclick = hideAgentDetails;
+document.getElementById('agent-details-overlay').addEventListener('mousedown', (e) => {
+  if (e.target.id === 'agent-details-overlay') hideAgentDetails();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') hideAgentDetails();
+});
+
+// ---------------------------------------------------------------------------
+// Main render
+// ---------------------------------------------------------------------------
+function render(data) {
+  document.getElementById('header-meta-text').textContent =
+    data.last_refresh ? `Last refresh: ${data.last_refresh.slice(11, 16)}` : '';
+  // A completed render means the (possibly manual) refresh finished — clear the
+  // in-flight dimming on the lightning bolt.
+  document.getElementById('refresh-now').classList.remove('refreshing');
+
+  document.getElementById('info-version').textContent =
+    `Version: ${data.version || '—'}`;
+  document.getElementById('info-refresh').textContent =
+    data.last_refresh ? `Refreshed: ${data.last_refresh.replace('T', ' ').slice(0, 16)}` : '';
+
+  renderList('in-progress-list', data.in_progress, 'in_progress');
+  renderList('done-list', data.done, 'done');
+  renderList('todo-current-list', data.todo_current, 'todo');
+
+  _collapsed = data.todo_other_collapsed !== false;
+  renderTodoOther(data.todo_other, _collapsed);
+  renderOthers(data.others);
+  notifyResize();
+
+  // Restore the header collapse state persisted across refreshes (a reload
+  // rebuilds the DOM expanded, so re-apply without re-persisting).
+  if (data.panel_collapsed) applyPanelCollapsed(true, false);
+}
+
+window.onload = () => {
+  const d = new Date();
+  document.getElementById('header-date').textContent =
+    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
+  render(window.STICKER_DATA);
+  requestAnimationFrame(() => { _initialResizeDone = true; });
+};
+</script>
+</body>
+</html>

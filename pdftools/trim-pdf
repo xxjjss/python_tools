@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""trim-pdf — extract page regions from a PDF (or an image converted to PDF) into separate files.
+
+Usage:
+    trim-pdf --input/-i <input_file> --pages/-p <pages> --output/-o <folder>
+
+Pages syntax:
+    Comma-separated regions. Each region is a single page or an inclusive range a-b.
+    Example: -p 3,4,5,1-5  -> 4 output files: pages 3, 4, 5 (one each) and pages 1-5 (one file).
+
+Output:
+    One PDF per region, written into <folder>.
+    Naming: <input-stem>-<region>.pdf  (e.g. Report-3.pdf, Report-1-5.pdf)
+    Name clashes are resolved macOS-style: "name.pdf", "name (1).pdf", "name (2).pdf", ...
+
+Behaviour:
+    - Input may be a PDF or an image (png/jpg/jpeg/tiff/... — anything `sips` can convert).
+    - A corrupt / unreadable / non-convertible input is an error.
+    - A region that references a page outside the document is an error.
+      All regions are validated before ANY file is written.
+    - If a region spans the entire document it degrades to "convert to PDF":
+        * input is already a PDF  -> no action for that region (no output).
+        * input is an image       -> the converted PDF is written as <input-stem>.pdf.
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+
+try:
+    from pypdf import PdfReader, PdfWriter
+except ImportError:
+    sys.exit("error: pypdf is required. Install with: pip3 install pypdf")
+
+
+def die(msg):
+    sys.exit(f"error: {msg}")
+
+
+def parse_pages(spec):
+    """Parse '3,4,5,1-5' into an ordered list of (start, end, label) tuples (1-indexed, inclusive)."""
+    regions = []
+    for raw in spec.split(","):
+        part = raw.strip()
+        if not part:
+            die(f"empty page region in '{spec}'")
+        if "-" in part:
+            bits = part.split("-")
+            if len(bits) != 2 or not bits[0].strip() or not bits[1].strip():
+                die(f"invalid page range '{part}'")
+            try:
+                start = int(bits[0].strip())
+                end = int(bits[1].strip())
+            except ValueError:
+                die(f"invalid page range '{part}'")
+            if start < 1 or end < 1:
+                die(f"page numbers must be >= 1 in '{part}'")
+            if start > end:
+                die(f"range start greater than end in '{part}'")
+            regions.append((start, end, f"{start}-{end}"))
+        else:
+            try:
+                page = int(part)
+            except ValueError:
+                die(f"invalid page number '{part}'")
+            if page < 1:
+                die(f"page numbers must be >= 1 in '{part}'")
+            regions.append((page, page, str(page)))
+    return regions
+
+
+def is_pdf(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(5).startswith(b"%PDF")
+    except OSError as e:
+        die(f"cannot read input file: {e}")
+
+
+def image_to_pdf(src, tmpdir):
+    """Convert an image to PDF via macOS sips. Returns the temp PDF path or dies."""
+    out = os.path.join(tmpdir, "converted.pdf")
+    proc = subprocess.run(
+        ["sips", "-s", "format", "pdf", src, "--out", out],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if proc.returncode != 0 or not os.path.exists(out):
+        die(f"cannot convert input to PDF (not a PDF and not a supported image): {proc.stderr.strip()}")
+    return out
+
+
+def load_reader(path, tmpdir):
+    """Return (PdfReader, input_is_pdf). Converts images to PDF as needed."""
+    input_is_pdf = is_pdf(path)
+    pdf_path = path if input_is_pdf else image_to_pdf(path, tmpdir)
+    try:
+        reader = PdfReader(pdf_path)
+        _ = len(reader.pages)  # force parse
+    except Exception as e:
+        die(f"input file is corrupt or not a valid PDF: {e}")
+    if len(reader.pages) == 0:
+        die("input PDF has no pages")
+    return reader, input_is_pdf
+
+
+def unique_path(folder, stem, ext):
+    """macOS Downloads-style dedup: name.pdf, name (1).pdf, name (2).pdf ..."""
+    candidate = os.path.join(folder, f"{stem}{ext}")
+    if not os.path.exists(candidate):
+        return candidate
+    i = 1
+    while True:
+        candidate = os.path.join(folder, f"{stem} ({i}){ext}")
+        if not os.path.exists(candidate):
+            return candidate
+        i += 1
+
+
+def write_pages(reader, start, end, out_path):
+    writer = PdfWriter()
+    for p in range(start, end + 1):
+        writer.add_page(reader.pages[p - 1])
+    with open(out_path, "wb") as f:
+        writer.write(f)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="trim-pdf",
+        description="Extract page regions from a PDF (or an image converted to PDF) into separate files.",
+    )
+    ap.add_argument("--input", "-i", required=True, metavar="<input_file>", help="source PDF or image")
+    ap.add_argument("--pages", "-p", required=True, metavar="<pages>",
+                    help="comma-separated regions; each a single page or a-b range, e.g. 3,4,5,1-5")
+    ap.add_argument("--output", "-o", required=True, metavar="<folder>", help="output folder")
+    args = ap.parse_args()
+
+    src = args.input
+    if not os.path.exists(src):
+        die(f"input file not found: {src}")
+    if not os.path.isfile(src):
+        die(f"input is not a file: {src}")
+
+    regions = parse_pages(args.pages)
+
+    out_folder = args.output
+    os.makedirs(out_folder, exist_ok=True)
+
+    stem = os.path.splitext(os.path.basename(src))[0]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reader, input_is_pdf = load_reader(src, tmpdir)
+        total = len(reader.pages)
+
+        # Validate every region against the document before writing anything.
+        for start, end, label in regions:
+            if end > total:
+                die(f"page region '{label}' exceeds document length ({total} pages)")
+
+        written = []
+        skipped = []
+        for start, end, label in regions:
+            covers_all = (start == 1 and end == total)
+            if covers_all:
+                # Region spans the whole document -> "convert to PDF" degrade case.
+                if input_is_pdf:
+                    skipped.append(label)  # already a PDF, nothing to do
+                    continue
+                out_path = unique_path(out_folder, stem, ".pdf")
+            else:
+                out_path = unique_path(out_folder, f"{stem}-{label}", ".pdf")
+            write_pages(reader, start, end, out_path)
+            written.append(out_path)
+
+    for path in written:
+        print(f"wrote: {path}")
+    for label in skipped:
+        print(f"skipped region '{label}': spans the whole document and input is already a PDF (no-op)")
+
+    if not written and not skipped:
+        print("nothing to do")
+
+
+if __name__ == "__main__":
+    main()
