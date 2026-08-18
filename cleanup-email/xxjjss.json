@@ -18,12 +18,14 @@
         [".*@uber.com","Your .* trip with Uber"],
         [".*@lyftmail.com","Your ride with .* on .*"],
         [".*@lyftmail.com","您与.*预约的.*的行程"],
+        [".*@.*airbnb.com", "我们已向你发放了.*的款项"],
         ["no-reply@myspwater.org", "MySPWater - Your Bill is Ready to View"]
     ],
     "start_date": "2013-1-1",
     "remove_all_before": "2013-3-31",
     "remove_unimportant_before": "2013-4-30",
     "unimportant_emails": [
+        ["voice-noreply@google.com",""],
         ["", "AutoPay payment reminder"],
         ["", "Check in now"],
         ["", "Check in is now open"]

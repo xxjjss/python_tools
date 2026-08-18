@@ -1,0 +1,9 @@
+{
+    "base_url": "https://www.piaotia.com/html/1/1657/",
+    "save_dir": "/Users/xxjjss/Downloads/lgqm",
+    "section_pattern": "<a\\s+href=\\\"(\\d+)\\.html\\\">([^<]*第[^<]*节[^<]*)</a>",
+    "file_url_template": "{base_url}{m1}.html",
+    "save_content_file": "临高启明--目录.html",
+    "save_file": "{m1}_{m2}.html",
+    "delay_on_error": 20
+}

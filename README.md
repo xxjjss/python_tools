@@ -18,5 +18,6 @@ cd python_tools/cleanup-email
 
 `cleanup-email` 是一个通过 IMAP 扫描并删除历史邮件的命令行脚本 — 详见 [cleanup-email/README.md](cleanup-email/README.md)。
 
-其他工具将按同样风格添加到仓库根目录。
+- `download-ebook`：一个用于抓取目录页并批量下载章节文件的小脚本，支持中文网页编码处理与链接更新（详见 [download-ebook/README.md](download-ebook/README.md)）。
+
 

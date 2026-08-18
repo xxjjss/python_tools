@@ -1,0 +1,9 @@
+{
+    "base_url": "http://www.purepen.com/sgyy/",
+    "save_dir": "/Users/xxjjss/Downloads/sgyy",
+    "section_pattern": "(?i)<a\\s+[^>]*?href=\\\"(\\d+)\\.htm\\\"[^>]*>([^<]+)</a>",
+    "file_url_template": "http://www.purepen.com/sgyy/{m1}.htm",
+    "save_content_file": "三国演义--目录.htm",
+    "save_file": "{m1}_{m2}.htm",
+    "delay_on_error": 20
+}
