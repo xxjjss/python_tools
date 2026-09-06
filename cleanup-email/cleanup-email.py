@@ -21,10 +21,26 @@ import os
 import subprocess
 import tty
 import termios
+import logging
 from datetime import datetime, timezone, timedelta
 from email.header import decode_header
 from email.utils import parseaddr, parsedate_to_datetime
 from dateutil import parser as date_parser
+from logging_helper import get_logger
+
+logger = get_logger("cleanup-email")
+_LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+_TERMINAL_ADDED = False
+
+
+def _enable_terminal():
+    global _TERMINAL_ADDED
+    if not _TERMINAL_ADDED:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
+        logger.addHandler(handler)
+        _TERMINAL_ADDED = True
 
 def getch():
     """Read a single character from stdin without waiting for Enter."""
@@ -70,7 +86,7 @@ class EmailCleaner:
                 self.start_date = None
 
     def log_msg(self, str):
-        print(str)
+        logger.info(str)
         if self.out_file_path:
             try:
                 with open(self.out_file_path, 'a', encoding='utf-8') as f:
@@ -143,15 +159,15 @@ class EmailCleaner:
         host = self.providers.get(provider)
 
         if not host:
-            print(f"[-] 不支持的邮箱服务商: {provider}（支持: yahoo, gmail）")
+            logger.error(f"[-] 不支持的邮箱服务商: {provider}（支持: yahoo, gmail）")
             return False
 
         # 解析密码
         pwd = self._resolve_password()
         if not pwd:
-            print(f"[-] 未能找到 {self.config['email_address']} 的 App Password/Token")
-            print("    Gmail: https://myaccount.google.com/apppasswords")
-            print("    Yahoo: 账号安全 > 生成应用TOKEN")
+            logger.error(f"[-] 未能找到 {self.config['email_address']} 的 App Password/Token")
+            logger.error("    Gmail: https://myaccount.google.com/apppasswords")
+            logger.error("    Yahoo: 账号安全 > 生成应用TOKEN")
             return False
 
         # 连接 & 登录
@@ -159,23 +175,23 @@ class EmailCleaner:
             self.mail = imaplib.IMAP4_SSL(host)
             self.mail.login(self.config['email_address'], pwd)
         except imaplib.IMAP4.error as e:
-            print(f"[-] IMAP 登录失败: {e}")
+            logger.error(f"[-] IMAP 登录失败: {e}")
             return False
         except Exception as e:
-            print(f"[-] 连接失败: {e}")
+            logger.error(f"[-] 连接失败: {e}")
             return False
 
         # 以 READ-WRITE 模式选择 INBOX，验证写权限
         try:
             typ, data = self.mail.select('INBOX')
             if typ != 'OK':
-                print(f"[-] 无法选择 INBOX: {data}")
+                logger.error(f"[-] 无法选择 INBOX: {data}")
                 return False
             # IMAP select 默认 READ-WRITE，无需额外操作
-            print(f"[+] 连接成功 ({provider})，INBOX 邮件数: {len(data[0].split()) if data[0] else 0}")
+            logger.info(f"[+] 连接成功 ({provider})，INBOX 邮件数: {len(data[0].split()) if data[0] else 0}")
             return True
         except Exception as e:
-            print(f"[-] INBOX 访问失败: {e}")
+            logger.error(f"[-] INBOX 访问失败: {e}")
             return False
 
     # ──────────────────────────────────────────
@@ -371,7 +387,7 @@ class EmailCleaner:
                     continue
                 return True  # 发件人和标题都匹配（或其中之一为空表示不限制）
             except re.error as e:
-                print(f"[-] 正则错误: {pattern} -> {e}")
+                logger.warning(f"[-] 正则错误: {pattern} -> {e}")
                 continue
 
         return False
@@ -430,7 +446,7 @@ class EmailCleaner:
             self.log_msg(f"[*] 起始搜索日期: {self.start_date.date()}")
 
         batch_size = self.config.get('batch_size', 10)
-        print(f"[*] 批处理大小: {batch_size}")
+        logger.info(f"[*] 批处理大小: {batch_size}")
 
         # 使用 IMAP SENTBEFORE 搜索（按发件日期而非接收日期）
         # 分两次搜索: 一次全删范围, 一次部分删除范围
@@ -439,7 +455,7 @@ class EmailCleaner:
 
         # ── 搜索全删范围 ──
         if self.all_before is None:
-            print(f"[*] 全删范围未配置，跳过全删范围扫描")
+            logger.info(f"[*] 全删范围未配置，跳过全删范围扫描")
         else:
             if self.start_date:
                 start_str = self.start_date.strftime("%d-%b-%Y")
@@ -449,26 +465,26 @@ class EmailCleaner:
             if res == 'OK':
                 mail_ids = data[0].split()
                 total = len(mail_ids)
-                print(f"[*] 全删范围内邮件 (≤{self.all_before.date()}): {total} 封")
+                logger.info(f"[*] 全删范围内邮件 (≤{self.all_before.date()}): {total} 封")
                 for i in range(0, total, batch_size):
                     batch = mail_ids[i:i+batch_size]
-                    print(f"[*] 处理批次 {i//batch_size + 1}: {len(batch)} 封邮件")
+                    logger.info(f"[*] 处理批次 {i//batch_size + 1}: {len(batch)} 封邮件")
                     self._classify_emails(batch, 'ALL', candidates)
                     self.process_candidates(candidates)
                     candidates = []  # 清空候选列表，为下一范围准备
             else:
-                print(f"[-] 全删范围搜索失败")
+                logger.warning(f"[-] 全删范围搜索失败")
 
         # ── 搜索部分删除范围 ──
         # 部分删除范围通常是 all_before ~ unimportant_before
         # 如果 all_before 为空则部分删除范围为start_date ~ unimportant_before
         if self.unimportant_before is None: 
-            print(f"[*] 部分删除范围未配置，跳过部分删除范围扫描")
+            logger.info(f"[*] 部分删除范围未配置，跳过部分删除范围扫描")
         else: 
             if self.all_before is not None: 
                 partial_since_dt = self.all_before
             else:
-                 partial_since_dt = self.start_date
+                partial_since_dt = self.start_date
             if self.start_date and self.start_date > partial_since_dt:
                 partial_since_dt = self.start_date
             partial_since_str = partial_since_dt.strftime("%d-%b-%Y")
@@ -477,16 +493,16 @@ class EmailCleaner:
             if res == 'OK':
                 mail_ids = data[0].split()
                 total = len(mail_ids)
-                print(f"[*] 部分删除范围 ({partial_since_dt.date()} ~ {self.unimportant_before.date()}): {total} 封")
+                logger.info(f"[*] 部分删除范围 ({partial_since_dt.date()} ~ {self.unimportant_before.date()}): {total} 封")
                 for i in range(0, total, batch_size):
                     batch = mail_ids[i:i+batch_size]
-                    print(f"[*] 处理批次 {i//batch_size + 1}: {len(batch)} 封邮件")
+                    logger.info(f"[*] 处理批次 {i//batch_size + 1}: {len(batch)} 封邮件")
                     self._classify_emails(batch, 'PARTIAL', candidates)
                     self.process_candidates(candidates)
                     candidates = []  # 清空候选列表，为下一范围准备
 
             else:
-                print(f"[-] 部分删除范围搜索失败")
+                logger.warning(f"[-] 部分删除范围搜索失败")
 
     def process_candidates(self, candidates):
         """处理候选邮件列表：显示、确认并删除"""
@@ -494,7 +510,7 @@ class EmailCleaner:
             return
 
         if self.force:
-            print(f"共 {len(candidates)} 封邮件将被删除:")
+            logger.info(f"共 {len(candidates)} 封邮件将被删除:")
             for i, (mid, d, sender, subj, reason) in enumerate(candidates, 1):
                 log = f"[+] {self.dryrun and '(Dry Run)' or ''} 删除邮件: {d.date()} {sender} | {subj[:60]} | {reason}"
                 self.log_msg(log) 
@@ -502,7 +518,7 @@ class EmailCleaner:
                     self.mail.store(mid, '+FLAGS', '\\Deleted')
             if not self.dryrun:
                 self.mail.expunge()
-            print(f"[+] {self.dryrun and '(Dry Run)' or ''} 已删除 {len(candidates)} 封邮件。")
+            logger.info(f"[+] {self.dryrun and '(Dry Run)' or ''} 已删除 {len(candidates)} 封邮件。")
   
         else: 
             for i, (mid, d, sender, subj, reason) in enumerate(candidates, 1):
@@ -641,10 +657,10 @@ class EmailCleaner:
                     protected_mails += 1
 
             except Exception as e:
-                print(f"[-] 处理邮件时出错: {e}")
+                logger.warning(f"[-] 处理邮件时出错: {e}")
                 fetch_failed += 1
                 continue
-        print(f"[*] 批次结果: {len(candidates)} 封待删, {protected_mails} 封受保护, {fetch_failed} 封获取失败")
+        logger.info(f"[*] 批次结果: {len(candidates)} 封待删, {protected_mails} 封受保护, {fetch_failed} 封获取失败")
 
 def main():
     parser = argparse.ArgumentParser(description="Email Cleanup Tool - 删除过往邮件")
@@ -654,11 +670,15 @@ def main():
     parser.add_argument("-d", "--date", help="Run cleanup for a single date (YYYY-MM-DD), ignore config date ranges")
     parser.add_argument("-m", "--mode", help="cleanup mode, all or partial, this param is only used when -d is specified")
     parser.add_argument("--dry", action="store_true", help="Dry run mode, will show message but will not implement the deletion")
+    parser.add_argument("-p", "--print", action="store_true", dest="print_log", help="Also print logs to terminal")
 
     args = parser.parse_args()
- 
+
+    if args.print_log:
+        _enable_terminal()
+
     if not os.path.exists(args.config):
-        print(f"[-] 配置文件不存在: {args.config}")
+        logger.error(f"[-] 配置文件不存在: {args.config}")
         sys.exit(1)
     
     if args.output and not os.path.exists(args.output):
@@ -676,10 +696,10 @@ def main():
             if args.mode and args.mode.lower() in ('all', 'partial'):
                 mode = args.mode.lower()
             else:
-                print(f"[-] 当指定 -d 参数时，必须同时指定 -m 参数为 'all' 或 'partial'")
+                logger.error(f"[-] 当指定 -d 参数时，必须同时指定 -m 参数为 'all' 或 'partial'")
                 sys.exit(1)
         except ValueError:
-            print(f"[-] 无效的日期格式: {args.date}，应为 YYYY-MM-DD")
+            logger.error(f"[-] 无效的日期格式: {args.date}，应为 YYYY-MM-DD")
             sys.exit(1)
         # 这里我们覆盖 cleaner 中的扫描日期，使其只处理指定日期的邮件
         if mode == 'all':

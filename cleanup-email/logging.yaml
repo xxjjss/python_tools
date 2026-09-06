@@ -1,0 +1,4 @@
+dir: ~/.log
+maxBytes: 1M
+backupCount: 10
+encoding: "utf-8"
