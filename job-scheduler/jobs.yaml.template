@@ -1,0 +1,96 @@
+# job-scheduler jobs — REFERENCE with worked examples.
+#
+# This is a reference file, not the live config. `install.sh` seeds a minimal
+# ~/.config/job-scheduler/jobs.yaml (just `jobs: []`). To use these examples,
+# copy the ones you want into that file and fix their `command` paths — the paths
+# below are placeholders and are NOT executable as written.
+#
+# The scheduler ticks once per minute and runs every enabled job whose 5-field
+# cron matches the current LOCAL time. Jobs run detached; a job still running
+# when its next tick fires is skipped (no overlap).
+#
+# Config path resolution (first that exists wins):
+#   $JOB_SCHEDULER_CONFIG
+#   ~/.config/job-scheduler/jobs.yaml
+#   ~/.config/job-scheduler/jobs.yml
+#
+# Cron fields (5): minute hour day-of-month month day-of-week
+#   Supports: *, */step, a-b ranges, a-b/step, and comma lists (e.g. "7,22,37,52").
+#   day-of-week: 0-6 (Sun=0); 7 also accepted as Sunday.
+#
+# Per-job keys:
+#   name    — required, unique. Used by `job-scheduler test <name>` and --delete.
+#   crons   — required. A LIST of 5-field expressions (see above); one entry is fine.
+#             With several entries the job runs on multiple schedules — it fires when
+#             ANY of them matches.
+#   command — required. Shell command run via `sh -c`; use an ABSOLUTE path to the
+#             script/binary (cron/launchd don't inherit your interactive PATH).
+#   enabled — optional, default true. Set false to keep a job in config but idle.
+#   on_overlap — optional, default "error". Only bites when a job has multiple
+#             schedules whose TIME WINDOWS overlap (same hour/day/month active):
+#               error    — reject the job (default; forces a deliberate choice so you
+#                          don't silently pay for extra runs).
+#               all      — union: fire when ANY active schedule matches (most runs).
+#               densest  — in an overlap window, only the densest schedule (most
+#                          firings per hour, measured in that window) picks the
+#                          minutes; sparser ones are muted.
+#               sparsest — likewise, but only the sparsest schedule picks.
+#             One command per job, so this only chooses WHICH minutes fire — never how
+#             many times (always at most once/minute). A job with a single schedule
+#             never overlaps, so the default is invisible to it.
+#
+# Manage without hand-editing (both hot-reload a running scheduler via SIGHUP):
+#   job-scheduler --put '{"name":"x","crons":["*/5 * * * *"],"command":"echo hi","enabled":true}'
+#   job-scheduler --put '{"name":"y","crons":["*/15 9-16 * * 1-5","0 * * * 0,6"],"command":"echo hi"}'
+#   # overlapping windows need an explicit on_overlap (else the default 'error' rejects it):
+#   job-scheduler --put '{"name":"z","crons":["*/15 * * * *","20,50 17-23,0-8 * * *"],"on_overlap":"densest","command":"echo hi"}'
+#   job-scheduler --delete x
+
+jobs:
+  # ── Example: run a poller every 15 minutes ──────────────────────────────────
+  - name: example-poll
+    crons:
+      - "*/15 * * * *"
+    command: /absolute/path/to/your/poll.sh
+    enabled: true
+
+  # ── Example: run three times a day (09:00, 13:00, 18:00) ────────────────────
+  - name: example-daily-thrice
+    crons:
+      - "0 9,13,18 * * *"
+    command: /absolute/path/to/your/daily.sh
+    enabled: true
+
+  # ── Example: weekdays only, twice a day (08:10 and 13:10, Mon-Fri) ──────────
+  - name: example-weekday-twice
+    crons:
+      - "10 8,13 * * 1-5"
+    command: /opt/homebrew/bin/python3 /absolute/path/to/your/scan.py
+    enabled: true
+
+  # ── Example: multiple schedules, NON-overlapping windows ────────────────────
+  # `crons` is a list. Here the three windows never overlap (distinct hours/days),
+  # so the default on_overlap=error is satisfied and the job just fires when any of
+  # them matches: every 15 min weekday business hours, hourly weekday
+  # evenings/overnight, hourly all weekend.
+  - name: example-multi-schedule
+    crons:
+      - "*/15 9-16 * * 1-5"   # Mon-Fri 09:00-16:45, every 15 min
+      - "0 17-23,0-8 * * 1-5" # Mon-Fri 17:00-08:00, hourly
+      - "0 * * * 0,6"         # Sat & Sun, hourly
+    command: /absolute/path/to/your/poll.sh
+    enabled: true
+
+  # ── Example: OVERLAPPING windows + a policy ─────────────────────────────────
+  # A (all-day, every 15 min) and B (evenings/overnight at :20 and :50) both cover
+  # the evening, so their windows overlap — the default 'error' would REJECT this.
+  # 'densest' keeps only the densest active schedule's minutes in the overlap window,
+  # so evenings fire at A's :00,:15,:30,:45 (B's :20,:50 are muted); outside B's
+  # window nothing changes. Use 'sparsest' for the opposite, or 'all' for the union.
+  - name: example-overlap-densest
+    crons:
+      - "*/15 * * * *"          # all day, every 15 min
+      - "20,50 17-23,0-8 * * *" # 17:00-08:59, at :20 and :50
+    on_overlap: densest
+    command: /absolute/path/to/your/poll.sh
+    enabled: true
