@@ -26,6 +26,8 @@ from datetime import datetime, timezone, timedelta
 from email.header import decode_header
 from email.utils import parseaddr, parsedate_to_datetime
 from dateutil import parser as date_parser
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from logging_helper import get_logger
 
 logger = get_logger("cleanup-email")
