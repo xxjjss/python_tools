@@ -14,7 +14,7 @@ user: ""
 
 # Directory holding the daily journal files (YYYY-MM-DD-journal.md).
 # ~ is expanded to your home directory.
-journal_path: "~/Journal"
+journal_path: "~/log/Journal"
 
 # How often (in minutes) the widget re-queries GUS. Must be a positive integer.
 refresh_interval_minutes: 15
